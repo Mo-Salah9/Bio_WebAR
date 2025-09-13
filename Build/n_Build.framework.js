@@ -455,10 +455,28 @@ void main()
           session.isAR = false;
           Module.WebXR.xrSession = session;
           thisXRMananger.xrSession = session;
-          // Add 3-second delay to allow XR controllers to initialize
-          setTimeout(function() {
-            thisXRMananger.onSessionStarted(session);
-          }, 3000);
+          // Wait for XR controllers to be detected before starting session
+          var waitForControllers = function(attempts) {
+            if (attempts === undefined) attempts = 0;
+            
+            // Check if controllers are detected
+            if (session.inputSources && session.inputSources.length > 0) {
+              console.log('XR Controllers detected, starting session');
+              thisXRMananger.onSessionStarted(session);
+            } else if (attempts < 10) { // Max 5 seconds (10 attempts * 500ms)
+              console.log('Waiting for XR controllers... attempt ' + (attempts + 1));
+              setTimeout(function() {
+                waitForControllers(attempts + 1);
+              }, 500);
+            } else {
+              // Fallback: start session even without controllers after 5 seconds
+              console.warn('XR Controllers not detected after 5 seconds, starting session anyway');
+              thisXRMananger.onSessionStarted(session);
+            }
+          };
+          
+          // Start checking for controllers immediately
+          waitForControllers();
         }).catch(function (error) {
           if (thisXRMananger.BrowserObject.resumeAsyncCallbacks) {
             thisXRMananger.BrowserObject.resumeAsyncCallbacks();
