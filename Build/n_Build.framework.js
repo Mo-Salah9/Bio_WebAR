@@ -351,6 +351,7 @@ void main()
         this.isVRSupported = false;
         this.onInputEvent = null;
         this.onSessionVisibilityEvent = null;
+        this.onInputSourcesChangeEvent = null;
         this.BrowserObject = null;
         this.JSEventsObject = null;
         this.init();
@@ -455,28 +456,7 @@ void main()
           session.isAR = false;
           Module.WebXR.xrSession = session;
           thisXRMananger.xrSession = session;
-          // Wait for XR controllers to be detected before starting session
-          var waitForControllers = function(attempts) {
-            if (attempts === undefined) attempts = 0;
-            
-            // Check if controllers are detected
-            if (session.inputSources && session.inputSources.length > 0) {
-              console.log('XR Controllers detected, starting session');
-              thisXRMananger.onSessionStarted(session);
-            } else if (attempts < 10) { // Max 5 seconds (10 attempts * 500ms)
-              console.log('Waiting for XR controllers... attempt ' + (attempts + 1));
-              setTimeout(function() {
-                waitForControllers(attempts + 1);
-              }, 500);
-            } else {
-              // Fallback: start session even without controllers after 5 seconds
-              console.warn('XR Controllers not detected after 5 seconds, starting session anyway');
-              thisXRMananger.onSessionStarted(session);
-            }
-          };
-          
-          // Start checking for controllers immediately
-          waitForControllers();
+          thisXRMananger.onSessionStarted(session);
         }).catch(function (error) {
           if (thisXRMananger.BrowserObject.resumeAsyncCallbacks) {
             thisXRMananger.BrowserObject.resumeAsyncCallbacks();
@@ -504,6 +484,7 @@ void main()
           xrSessionEvent.session.removeEventListener('squeezestart', this.onInputEvent);
           xrSessionEvent.session.removeEventListener('squeezeend', this.onInputEvent);
           xrSessionEvent.session.removeEventListener('visibilitychange', this.onSessionVisibilityEvent);
+          xrSessionEvent.session.removeEventListener('inputsourceschange', this.onInputSourcesChangeEvent);
         }
     
         if (this.viewerHitTestSource) {
@@ -619,6 +600,45 @@ void main()
                 this.xrData.SendTouchEvent(this.JSEventsObject, "touchend", this.canvas, [inputSource.xrTouchObject]);
                 inputSource.xrTouchObject = null;
                 break;
+            }
+          }
+        }
+      }
+      
+      XRManager.prototype.onInputSourcesChange = function (event) {
+        var session = this.xrSession;
+        if (!session || !session.isInSession) {
+          return;
+        }
+        var xrData = this.xrData;
+        if (event.added) {
+          for (var i = 0; i < event.added.length; i++) {
+            var src = event.added[i];
+            if (src.hand) {
+              var handData = src.handedness == 'right' ? xrData.handRight : xrData.handLeft;
+              Module.HEAPF32[handData.enabledIndex] = 1; // XRHandData.enabled
+              Module.HEAPF32[handData.handIndex] = src.handedness == 'right' ? 2 : 1; // XRHandData.hand
+            } else if (src.gripSpace) {
+              var controller = src.handedness == 'right' ? xrData.controllerA : xrData.controllerB;
+              var hand = src.handedness == 'right' ? 2 : 1;
+              Module.HEAPF32[controller.enabledIndex] = 1; // XRControllerData.enabled
+              Module.HEAPF32[controller.handIndex] = hand; // XRControllerData.hand
+              if (controller.updatedProfiles == 0 && src.profiles && src.profiles.length > 0) {
+                controller.profiles = src.profiles;
+                controller.updatedProfiles = 1;
+              }
+            }
+          }
+        }
+        if (event.removed) {
+          for (var j = 0; j < event.removed.length; j++) {
+            var rsrc = event.removed[j];
+            if (rsrc.hand) {
+              var handDataR = rsrc.handedness == 'right' ? xrData.handRight : xrData.handLeft;
+              Module.HEAPF32[handDataR.enabledIndex] = 0; // XRHandData.enabled
+            } else {
+              var controllerR = rsrc.handedness == 'right' ? xrData.controllerA : xrData.controllerB;
+              Module.HEAPF32[controllerR.enabledIndex] = 0; // XRControllerData.enabled
             }
           }
         }
@@ -753,6 +773,7 @@ void main()
         
         this.onInputEvent = this.onInputSourceEvent.bind(this);
         this.onSessionVisibilityEvent = this.onVisibilityChange.bind(this);
+        this.onInputSourcesChangeEvent = this.onInputSourcesChange.bind(this);
       }
     
       XRManager.prototype.UpdateXRCapabilities = function() {
@@ -1038,6 +1059,7 @@ void main()
           session.addEventListener('squeezestart', this.onInputEvent);
           session.addEventListener('squeezeend', this.onInputEvent);
           session.addEventListener('visibilitychange', this.onSessionVisibilityEvent);
+          session.addEventListener('inputsourceschange', this.onInputSourcesChangeEvent);
     
           this.xrData.controllerA.setIndices(Module.ControllersArrayOffset);
           this.xrData.controllerB.setIndices(Module.ControllersArrayOffset + 34);
