@@ -455,7 +455,10 @@ void main()
           session.isAR = false;
           Module.WebXR.xrSession = session;
           thisXRMananger.xrSession = session;
-          thisXRMananger.onSessionStarted(session);
+          // Add 3-second delay to allow XR controllers to initialize
+          setTimeout(function() {
+            thisXRMananger.onSessionStarted(session);
+          }, 3000);
         }).catch(function (error) {
           if (thisXRMananger.BrowserObject.resumeAsyncCallbacks) {
             thisXRMananger.BrowserObject.resumeAsyncCallbacks();
