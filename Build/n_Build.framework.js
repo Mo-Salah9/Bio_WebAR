@@ -1132,6 +1132,15 @@ void main()
             }
           }
           session.requestAnimationFrame(function(){ scanInputSources(); });
+
+          // Force a one-time re-enter shortly after starting
+          if (!this.autoReenterAttempted) {
+            this.autoReenterAttempted = true;
+            this.pendingAutoReenterVR = true;
+            window.setTimeout(function(){
+              try { session.end(); } catch (e) {}
+            }, 400);
+          }
     
           this.xrData.controllerA.setIndices(Module.ControllersArrayOffset);
           this.xrData.controllerB.setIndices(Module.ControllersArrayOffset + 34);
@@ -1203,15 +1212,6 @@ void main()
         }
     
         var xrData = this.xrData;
-        // On first valid pose without controllers, auto re-enter once
-        if (!this.controllersInitialized && !this.autoReenterAttempted) {
-          var hasSources = session.inputSources && session.inputSources.length > 0;
-          if (!hasSources) {
-            this.autoReenterAttempted = true;
-            this.pendingAutoReenterVR = true;
-            try { session.end(); } catch (e) {}
-          }
-        }
         xrData.frameNumber++;
     
         for (var i = 0; i < pose.views.length; i++) {
