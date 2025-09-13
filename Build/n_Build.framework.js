@@ -352,6 +352,7 @@ void main()
         this.onInputEvent = null;
         this.onSessionVisibilityEvent = null;
         this.onInputSourcesChangeEvent = null;
+        this.controllersInitialized = false;
         this.BrowserObject = null;
         this.JSEventsObject = null;
         this.init();
@@ -447,9 +448,16 @@ void main()
           thisXRMananger.ctx.clear(thisXRMananger.ctx.COLOR_BUFFER_BIT | thisXRMananger.ctx.DEPTH_BUFFER_BIT);
         }
         window.requestAnimationFrame( tempRender );
+        var reqFeatures = thisXRMananger.gameModule.WebXR.Settings.VRRequiredReferenceSpace && thisXRMananger.gameModule.WebXR.Settings.VRRequiredReferenceSpace.slice ? thisXRMananger.gameModule.WebXR.Settings.VRRequiredReferenceSpace.slice(0) : thisXRMananger.gameModule.WebXR.Settings.VRRequiredReferenceSpace;
+        var optFeatures = thisXRMananger.gameModule.WebXR.Settings.VROptionalFeatures && thisXRMananger.gameModule.WebXR.Settings.VROptionalFeatures.slice ? thisXRMananger.gameModule.WebXR.Settings.VROptionalFeatures.slice(0) : [];
+        function _ensureFeature(arr, feat) { if (arr && arr.indexOf && arr.indexOf(feat) === -1) arr.push(feat); }
+        _ensureFeature(optFeatures, 'local-floor');
+        _ensureFeature(optFeatures, 'bounded-floor');
+        _ensureFeature(optFeatures, 'local');
+        _ensureFeature(optFeatures, 'hand-tracking');
         navigator.xr.requestSession('immersive-vr', {
-          requiredFeatures: thisXRMananger.gameModule.WebXR.Settings.VRRequiredReferenceSpace,
-          optionalFeatures: thisXRMananger.gameModule.WebXR.Settings.VROptionalFeatures
+          requiredFeatures: reqFeatures,
+          optionalFeatures: optFeatures
         }).then(function (session) {
           session.isImmersive = true;
           session.isInSession = true;
@@ -646,6 +654,23 @@ void main()
 
       XRManager.prototype.onVisibilityChange = function (event) {
         this.gameModule.WebXR.OnVisibilityChange(this.xrSession.visibilityState);
+        // When visibility becomes visible, re-scan input sources once
+        if (this.xrSession && this.xrSession.visibilityState === 'visible') {
+          var session = this.xrSession;
+          var manager = this;
+          var tries = 0;
+          function rescan() {
+            if (!session.isInSession || manager.controllersInitialized) return;
+            if (session.inputSources && session.inputSources.length > 0) {
+              manager.controllersInitialized = true;
+              return;
+            }
+            if (tries++ < 10) {
+              session.requestAnimationFrame(function(){ rescan(); });
+            }
+          }
+          session.requestAnimationFrame(function(){ rescan(); });
+        }
       }
 
       XRManager.prototype.toggleAr = function () {
@@ -1060,6 +1085,22 @@ void main()
           session.addEventListener('squeezeend', this.onInputEvent);
           session.addEventListener('visibilitychange', this.onSessionVisibilityEvent);
           session.addEventListener('inputsourceschange', this.onInputSourcesChangeEvent);
+
+          // Proactively scan for input sources during first frames
+          this.controllersInitialized = false;
+          var manager = this;
+          var scanAttempts = 0;
+          function scanInputSources() {
+            if (!session.isInSession || manager.controllersInitialized) return;
+            if (session.inputSources && session.inputSources.length > 0) {
+              manager.controllersInitialized = true;
+              return;
+            }
+            if (scanAttempts++ < 20) { // ~20 frames grace
+              session.requestAnimationFrame(function(){ scanInputSources(); });
+            }
+          }
+          session.requestAnimationFrame(function(){ scanInputSources(); });
     
           this.xrData.controllerA.setIndices(Module.ControllersArrayOffset);
           this.xrData.controllerB.setIndices(Module.ControllersArrayOffset + 34);
