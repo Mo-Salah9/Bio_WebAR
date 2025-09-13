@@ -353,6 +353,9 @@ void main()
         this.onSessionVisibilityEvent = null;
         this.onInputSourcesChangeEvent = null;
         this.controllersInitialized = false;
+        this.autoReenterAttempted = false;
+        this.pendingAutoReenterVR = false;
+        this.vrRequestOptions = null;
         this.BrowserObject = null;
         this.JSEventsObject = null;
         this.init();
@@ -455,10 +458,11 @@ void main()
         _ensureFeature(optFeatures, 'bounded-floor');
         _ensureFeature(optFeatures, 'local');
         _ensureFeature(optFeatures, 'hand-tracking');
-        navigator.xr.requestSession('immersive-vr', {
+        this.vrRequestOptions = {
           requiredFeatures: reqFeatures,
           optionalFeatures: optFeatures
-        }).then(function (session) {
+        };
+        navigator.xr.requestSession('immersive-vr', this.vrRequestOptions).then(function (session) {
           session.isImmersive = true;
           session.isInSession = true;
           session.isAR = false;
@@ -513,6 +517,31 @@ void main()
         Module.HEAPF32[this.xrData.handRight.enabledIndex] = 0; // XRHandData.enabled
 
         this.gameModule.WebXR.OnEndXR();
+        // If flagged to re-enter VR, do it once automatically
+        if (this.pendingAutoReenterVR && this.isVRSupported && navigator.xr && navigator.xr.requestSession) {
+          this.pendingAutoReenterVR = false;
+          var self = this;
+          var options = this.vrRequestOptions || { requiredFeatures: this.gameModule.WebXR.Settings.VRRequiredReferenceSpace, optionalFeatures: this.gameModule.WebXR.Settings.VROptionalFeatures };
+          // Small delay to let runtime settle
+          window.setTimeout(function(){
+            navigator.xr.requestSession('immersive-vr', options).then(function(session){
+              session.isImmersive = true;
+              session.isInSession = true;
+              session.isAR = false;
+              Module.WebXR.xrSession = session;
+              self.xrSession = session;
+              self.onSessionStarted(session);
+            }).catch(function(err){
+              // Swallow error and resume app
+              if (self.BrowserObject && self.BrowserObject.resumeAsyncCallbacks) {
+                self.BrowserObject.resumeAsyncCallbacks();
+              }
+              if (self.BrowserObject && self.BrowserObject.mainLoop) {
+                self.BrowserObject.mainLoop.resume();
+              }
+            });
+          }, 300);
+        }
         this.didNotifyUnity = false;
         var pixelRatio = Module.devicePixelRatio || window.devicePixelRatio || 1;
         this.canvas.width = this.canvas.parentElement.clientWidth * pixelRatio;
@@ -1094,6 +1123,8 @@ void main()
             if (!session.isInSession || manager.controllersInitialized) return;
             if (session.inputSources && session.inputSources.length > 0) {
               manager.controllersInitialized = true;
+              // If re-enter was pending but controllers are now present, clear
+              manager.pendingAutoReenterVR = false;
               return;
             }
             if (scanAttempts++ < 20) { // ~20 frames grace
@@ -1172,6 +1203,15 @@ void main()
         }
     
         var xrData = this.xrData;
+        // On first valid pose without controllers, auto re-enter once
+        if (!this.controllersInitialized && !this.autoReenterAttempted) {
+          var hasSources = session.inputSources && session.inputSources.length > 0;
+          if (!hasSources) {
+            this.autoReenterAttempted = true;
+            this.pendingAutoReenterVR = true;
+            try { session.end(); } catch (e) {}
+          }
+        }
         xrData.frameNumber++;
     
         for (var i = 0; i < pose.views.length; i++) {
