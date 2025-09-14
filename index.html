@@ -86,66 +86,39 @@
       enterARButton.addEventListener('click', function (event) {
         unityInstance.Module.WebXR.toggleAR();
       }, false);
-      let vrPauseTimerId = null;
-      let vrResumeTimerId = null;
+      let vrExitTimerId = null;
+      let vrReenterTimerId = null;
       let vrSessionPollId = null;
-      const PAUSE_DELAY_MS = 2000; // pause 2s after entering VR
-      const RESUME_DELAY_MS = 800; // how long to stay paused before resuming
+      const EXIT_AFTER_MS = 2000; // exit 2s after entering VR
+      const REENTER_AFTER_MS = 1200; // time to show browser UI before re-entering
 
-      function pauseUnity() {
-        if (!unityInstance || !unityInstance.Module || !unityInstance.Module.WebXR) return;
-        const browser = unityInstance.Module.WebXR.GetBrowserObject();
-        if (browser && browser.mainLoop) {
-          if (browser.pauseAsyncCallbacks) browser.pauseAsyncCallbacks();
-          browser.mainLoop.pause();
-        }
-        if (unityInstance.Module.WebXR.OnVisibilityChange) {
-          unityInstance.Module.WebXR.OnVisibilityChange('visible-blurred');
-        }
-      }
-
-      function resumeUnity() {
-        if (!unityInstance || !unityInstance.Module || !unityInstance.Module.WebXR) return;
-        const browser = unityInstance.Module.WebXR.GetBrowserObject();
-        if (browser && browser.mainLoop) {
-          if (browser.resumeAsyncCallbacks) browser.resumeAsyncCallbacks();
-          browser.mainLoop.resume();
-        }
-        if (unityInstance.Module.WebXR.OnVisibilityChange) {
-          unityInstance.Module.WebXR.OnVisibilityChange('visible');
-        }
-      }
-
-      function attachCleanupOnEnd(session) {
+      function attachReenterOnEnd(session, webxr) {
         if (!session) return;
-        const cleanup = function(){
-          if (vrPauseTimerId) { clearTimeout(vrPauseTimerId); vrPauseTimerId = null; }
-          if (vrResumeTimerId) { clearTimeout(vrResumeTimerId); vrResumeTimerId = null; }
-          if (vrSessionPollId) { clearInterval(vrSessionPollId); vrSessionPollId = null; }
+        const onEnd = function () {
+          if (vrReenterTimerId) clearTimeout(vrReenterTimerId);
+          vrReenterTimerId = setTimeout(function(){
+            webxr.toggleVR();
+          }, REENTER_AFTER_MS);
         };
         try {
-          session.addEventListener('end', cleanup, { once: true });
+          session.addEventListener('end', onEnd, { once: true });
         } catch (e) {
-          const onceCleanup = function(){ session.removeEventListener('end', onceCleanup); cleanup(); };
-          session.addEventListener('end', onceCleanup);
+          const oneTime = function(){ session.removeEventListener('end', oneTime); onEnd(); };
+          session.addEventListener('end', oneTime);
         }
       }
 
-      function schedulePauseResumeAfterVRSessionStart() {
+      function scheduleExitAndReenterAfterVRSessionStart() {
         if (!unityInstance || !unityInstance.Module || !unityInstance.Module.WebXR) return;
         const webxr = unityInstance.Module.WebXR;
         const handleActive = function() {
-          if (vrPauseTimerId) clearTimeout(vrPauseTimerId);
-          vrPauseTimerId = setTimeout(function(){
-            pauseUnity();
-            if (vrResumeTimerId) clearTimeout(vrResumeTimerId);
-            vrResumeTimerId = setTimeout(function(){
-              resumeUnity();
-            }, RESUME_DELAY_MS);
-          }, PAUSE_DELAY_MS);
-        }
+          attachReenterOnEnd(webxr.xrSession, webxr);
+          if (vrExitTimerId) clearTimeout(vrExitTimerId);
+          vrExitTimerId = setTimeout(function(){
+            webxr.toggleVR();
+          }, EXIT_AFTER_MS);
+        };
         if (webxr.xrSession && webxr.xrSession.isInSession) {
-          attachCleanupOnEnd(webxr.xrSession);
           handleActive();
         } else {
           if (vrSessionPollId) clearInterval(vrSessionPollId);
@@ -153,7 +126,6 @@
             if (webxr.xrSession && webxr.xrSession.isInSession) {
               clearInterval(vrSessionPollId);
               vrSessionPollId = null;
-              attachCleanupOnEnd(webxr.xrSession);
               handleActive();
             }
           }, 100);
@@ -162,7 +134,7 @@
 
       enterVRButton.addEventListener('click', function (event) {
         unityInstance.Module.WebXR.toggleVR();
-        schedulePauseResumeAfterVRSessionStart();
+        scheduleExitAndReenterAfterVRSessionStart();
       }, false);
     </script>
   </body>
