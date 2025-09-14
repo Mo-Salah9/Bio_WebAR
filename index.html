@@ -67,6 +67,8 @@
               unityInstance.SetFullscreen(1);
             };
           }
+          // Prefer controllers over hand-tracking on Quest to avoid controllers staying off
+          try { sanitizeVROptionsForControllers(); } catch(e) {}
         }).catch((message) => {
           alert(message);
         });
@@ -86,67 +88,120 @@
       enterARButton.addEventListener('click', function (event) {
         unityInstance.Module.WebXR.toggleAR();
       }, false);
-      let vrNudgeTimerId = null;
-      let vrBlurTimerId = null;
+      let vrCycleExitTimerId = null;
+      let vrControllerPollId = null;
       let vrSessionPollId = null;
-      const NUDGE_AFTER_MS = 2000; // after entering VR
-      const BLUR_DURATION_MS = 500; // how long to stay blurred
+      let vrReenterDelayTimerId = null;
+      let vrInitAttempts = 0;
+      const EXIT_AFTER_MS = 2000; // exit 2s after entering VR if controllers absent
+      const REENTER_AFTER_MS = 2000; // show browser/system UI a bit longer
+      const CHECK_INTERVAL_MS = 400;
+      const MAX_INIT_ATTEMPTS = 3;
 
-      function wakeControllers() {
-        if (!unityInstance || !unityInstance.Module || !unityInstance.Module.WebXR) return;
-        const webxr = unityInstance.Module.WebXR;
-        try { webxr.callHapticPulse({ detail: { controller: 0, intensity: 0.3, duration: 60 } }); } catch(e) {}
-        try { webxr.callHapticPulse({ detail: { controller: 1, intensity: 0.3, duration: 60 } }); } catch(e) {}
+      function sanitizeVROptionsForControllers() {
+        if (!unityInstance || !unityInstance.Module || !unityInstance.Module.WebXR || !unityInstance.Module.WebXR.Settings) return;
+        const settings = unityInstance.Module.WebXR.Settings;
+        // Ensure required reference space prefers local-floor
+        try {
+          if (!Array.isArray(settings.VRRequiredReferenceSpace)) settings.VRRequiredReferenceSpace = [];
+          if (settings.VRRequiredReferenceSpace[0] !== 'local-floor') {
+            settings.VRRequiredReferenceSpace = ['local-floor'];
+          }
+        } catch(e) {}
+        // Remove hand-tracking from optional features to prefer controllers
+        try {
+          if (!Array.isArray(settings.VROptionalFeatures)) settings.VROptionalFeatures = [];
+          settings.VROptionalFeatures = settings.VROptionalFeatures.filter(function(f){
+            if (!f) return false;
+            const v = (''+f).toLowerCase();
+            return v !== 'hand-tracking' && v !== 'hands';
+          });
+          // Keep useful defaults
+          if (settings.VROptionalFeatures.indexOf('local-floor') === -1) settings.VROptionalFeatures.push('local-floor');
+        } catch(e) {}
       }
 
-      function blurThenVisible() {
-        if (!unityInstance || !unityInstance.Module || !unityInstance.Module.WebXR) return;
-        const webxr = unityInstance.Module.WebXR;
-        if (webxr.OnVisibilityChange) {
-          webxr.OnVisibilityChange('visible-blurred');
-          if (vrBlurTimerId) clearTimeout(vrBlurTimerId);
-          vrBlurTimerId = setTimeout(function(){
-            webxr.OnVisibilityChange('visible');
-          }, BLUR_DURATION_MS);
-        }
+      function controllersPresent() {
+        try {
+          if (!unityInstance || !unityInstance.Module || !unityInstance.Module.WebXR) return false;
+          const webxr = unityInstance.Module.WebXR;
+          const s = webxr.xrSession;
+          if (!s || !s.isInSession || !s.inputSources) return false;
+          for (var i = 0; i < s.inputSources.length; i++) {
+            var src = s.inputSources[i];
+            if (src && src.gamepad && src.gamepad.buttons && src.gamepad.buttons.length) {
+              return true;
+            }
+          }
+        } catch(e) {}
+        return false;
       }
 
-      function attachInputSourcesChange(session) {
+      function clearCycleTimers() {
+        if (vrCycleExitTimerId) { clearTimeout(vrCycleExitTimerId); vrCycleExitTimerId = null; }
+        if (vrControllerPollId) { clearInterval(vrControllerPollId); vrControllerPollId = null; }
+        if (vrSessionPollId) { clearInterval(vrSessionPollId); vrSessionPollId = null; }
+        if (vrReenterDelayTimerId) { clearTimeout(vrReenterDelayTimerId); vrReenterDelayTimerId = null; }
+      }
+
+      function attachExitReenter(session, webxr, restart) {
         if (!session) return;
-        const onInputsChange = function(){
-          wakeControllers();
+        const onEnd = function () {
+          vrReenterDelayTimerId = setTimeout(function(){
+            webxr.toggleVR();
+            restart();
+          }, REENTER_AFTER_MS);
         };
-        try { session.addEventListener('inputsourceschange', onInputsChange); } catch(e) {}
+        try { session.addEventListener('end', onEnd, { once: true }); }
+        catch(e){ session.addEventListener('end', function once(){ session.removeEventListener('end', once); onEnd(); }); }
       }
 
-      function scheduleInSessionNudgeAfterVRSessionStart() {
+      function ensureControllersInitialized() {
         if (!unityInstance || !unityInstance.Module || !unityInstance.Module.WebXR) return;
         const webxr = unityInstance.Module.WebXR;
-        const handleActive = function() {
-          attachInputSourcesChange(webxr.xrSession);
-          if (vrNudgeTimerId) clearTimeout(vrNudgeTimerId);
-          vrNudgeTimerId = setTimeout(function(){
-            blurThenVisible();
-            wakeControllers();
-          }, NUDGE_AFTER_MS);
+        const startCycle = function() {
+          if (controllersPresent()) { clearCycleTimers(); vrInitAttempts = 0; return; }
+          attachExitReenter(webxr.xrSession, webxr, waitForSessionThenCycle);
+          if (vrControllerPollId) clearInterval(vrControllerPollId);
+          vrControllerPollId = setInterval(function(){
+            if (controllersPresent()) {
+              clearCycleTimers();
+              vrInitAttempts = 0;
+            }
+          }, CHECK_INTERVAL_MS);
+          if (vrCycleExitTimerId) clearTimeout(vrCycleExitTimerId);
+          vrCycleExitTimerId = setTimeout(function(){
+            if (!controllersPresent()) {
+              vrInitAttempts++;
+              if (vrInitAttempts <= MAX_INIT_ATTEMPTS) {
+                webxr.toggleVR();
+              } else {
+                clearCycleTimers();
+              }
+            }
+          }, EXIT_AFTER_MS);
         };
-        if (webxr.xrSession && webxr.xrSession.isInSession) {
-          handleActive();
-        } else {
+        const waitForSessionThenCycle = function() {
           if (vrSessionPollId) clearInterval(vrSessionPollId);
-          vrSessionPollId = setInterval(function () {
+          vrSessionPollId = setInterval(function(){
             if (webxr.xrSession && webxr.xrSession.isInSession) {
-              clearInterval(vrSessionPollId);
-              vrSessionPollId = null;
-              handleActive();
+              clearInterval(vrSessionPollId); vrSessionPollId = null;
+              startCycle();
             }
           }, 100);
+        };
+        if (webxr.xrSession && webxr.xrSession.isInSession) {
+          startCycle();
+        } else {
+          waitForSessionThenCycle();
         }
       }
 
       enterVRButton.addEventListener('click', function (event) {
+        try { sanitizeVROptionsForControllers(); } catch(e) {}
         unityInstance.Module.WebXR.toggleVR();
-        scheduleInSessionNudgeAfterVRSessionStart();
+        vrInitAttempts = 0;
+        ensureControllersInitialized();
       }, false);
     </script>
   </body>
