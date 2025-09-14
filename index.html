@@ -86,37 +86,49 @@
       enterARButton.addEventListener('click', function (event) {
         unityInstance.Module.WebXR.toggleAR();
       }, false);
-      let vrExitTimerId = null;
-      let vrReenterTimerId = null;
+      let vrNudgeTimerId = null;
+      let vrBlurTimerId = null;
       let vrSessionPollId = null;
-      const EXIT_AFTER_MS = 2000; // exit 2s after entering VR
-      const REENTER_AFTER_MS = 1200; // time to show browser UI before re-entering
+      const NUDGE_AFTER_MS = 2000; // after entering VR
+      const BLUR_DURATION_MS = 500; // how long to stay blurred
 
-      function attachReenterOnEnd(session, webxr) {
-        if (!session) return;
-        const onEnd = function () {
-          if (vrReenterTimerId) clearTimeout(vrReenterTimerId);
-          vrReenterTimerId = setTimeout(function(){
-            webxr.toggleVR();
-          }, REENTER_AFTER_MS);
-        };
-        try {
-          session.addEventListener('end', onEnd, { once: true });
-        } catch (e) {
-          const oneTime = function(){ session.removeEventListener('end', oneTime); onEnd(); };
-          session.addEventListener('end', oneTime);
+      function wakeControllers() {
+        if (!unityInstance || !unityInstance.Module || !unityInstance.Module.WebXR) return;
+        const webxr = unityInstance.Module.WebXR;
+        try { webxr.callHapticPulse({ detail: { controller: 0, intensity: 0.3, duration: 60 } }); } catch(e) {}
+        try { webxr.callHapticPulse({ detail: { controller: 1, intensity: 0.3, duration: 60 } }); } catch(e) {}
+      }
+
+      function blurThenVisible() {
+        if (!unityInstance || !unityInstance.Module || !unityInstance.Module.WebXR) return;
+        const webxr = unityInstance.Module.WebXR;
+        if (webxr.OnVisibilityChange) {
+          webxr.OnVisibilityChange('visible-blurred');
+          if (vrBlurTimerId) clearTimeout(vrBlurTimerId);
+          vrBlurTimerId = setTimeout(function(){
+            webxr.OnVisibilityChange('visible');
+          }, BLUR_DURATION_MS);
         }
       }
 
-      function scheduleExitAndReenterAfterVRSessionStart() {
+      function attachInputSourcesChange(session) {
+        if (!session) return;
+        const onInputsChange = function(){
+          wakeControllers();
+        };
+        try { session.addEventListener('inputsourceschange', onInputsChange); } catch(e) {}
+      }
+
+      function scheduleInSessionNudgeAfterVRSessionStart() {
         if (!unityInstance || !unityInstance.Module || !unityInstance.Module.WebXR) return;
         const webxr = unityInstance.Module.WebXR;
         const handleActive = function() {
-          attachReenterOnEnd(webxr.xrSession, webxr);
-          if (vrExitTimerId) clearTimeout(vrExitTimerId);
-          vrExitTimerId = setTimeout(function(){
-            webxr.toggleVR();
-          }, EXIT_AFTER_MS);
+          attachInputSourcesChange(webxr.xrSession);
+          if (vrNudgeTimerId) clearTimeout(vrNudgeTimerId);
+          vrNudgeTimerId = setTimeout(function(){
+            blurThenVisible();
+            wakeControllers();
+          }, NUDGE_AFTER_MS);
         };
         if (webxr.xrSession && webxr.xrSession.isInSession) {
           handleActive();
@@ -134,7 +146,7 @@
 
       enterVRButton.addEventListener('click', function (event) {
         unityInstance.Module.WebXR.toggleVR();
-        scheduleExitAndReenterAfterVRSessionStart();
+        scheduleInSessionNudgeAfterVRSessionStart();
       }, false);
     </script>
   </body>
