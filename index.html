@@ -24,7 +24,7 @@
         <button id="entervr" value="Enter VR" disabled>VR</button>
         <button id="enterar" value="Enter AR" disabled>AR</button>
         <div id="unity-webxr-link">Using <a href="https://github.com/De-Panther/unity-webxr-export" target="_blank" title="WebXR Export">WebXR Export</a></div>
-        <div id="unity-build-title">bio-cell-activities-vr 1</div>
+        <div id="unity-build-title">bio-cell-activities-vr 2</div>
       </div>
     </div>
     <script>
@@ -86,52 +86,75 @@
       enterARButton.addEventListener('click', function (event) {
         unityInstance.Module.WebXR.toggleAR();
       }, false);
-      let vrExitTimerId = null;
+      let vrPauseTimerId = null;
+      let vrResumeTimerId = null;
       let vrSessionPollId = null;
-      let vrReenterOnce = false;
-      function attachReenterOnEnd(session, webxr) {
-        if (!session) return;
-        const onEnd = function () {
-          if (vrReenterOnce) {
-            vrReenterOnce = false;
-            setTimeout(function(){
-              webxr.toggleVR();
-            }, 300);
-          }
-        };
-        try {
-          session.addEventListener('end', onEnd, { once: true });
-        } catch (e) {
-          // Fallback if {once:true} is not supported
-          const oneTime = function(){
-            session.removeEventListener('end', oneTime);
-            onEnd();
-          };
-          session.addEventListener('end', oneTime);
+      const PAUSE_DELAY_MS = 2000; // pause 2s after entering VR
+      const RESUME_DELAY_MS = 800; // how long to stay paused before resuming
+
+      function pauseUnity() {
+        if (!unityInstance || !unityInstance.Module || !unityInstance.Module.WebXR) return;
+        const browser = unityInstance.Module.WebXR.GetBrowserObject();
+        if (browser && browser.mainLoop) {
+          if (browser.pauseAsyncCallbacks) browser.pauseAsyncCallbacks();
+          browser.mainLoop.pause();
+        }
+        if (unityInstance.Module.WebXR.OnVisibilityChange) {
+          unityInstance.Module.WebXR.OnVisibilityChange('visible-blurred');
         }
       }
-      function scheduleExitAfterVRSessionStart() {
+
+      function resumeUnity() {
+        if (!unityInstance || !unityInstance.Module || !unityInstance.Module.WebXR) return;
+        const browser = unityInstance.Module.WebXR.GetBrowserObject();
+        if (browser && browser.mainLoop) {
+          if (browser.resumeAsyncCallbacks) browser.resumeAsyncCallbacks();
+          browser.mainLoop.resume();
+        }
+        if (unityInstance.Module.WebXR.OnVisibilityChange) {
+          unityInstance.Module.WebXR.OnVisibilityChange('visible');
+        }
+      }
+
+      function attachCleanupOnEnd(session) {
+        if (!session) return;
+        const cleanup = function(){
+          if (vrPauseTimerId) { clearTimeout(vrPauseTimerId); vrPauseTimerId = null; }
+          if (vrResumeTimerId) { clearTimeout(vrResumeTimerId); vrResumeTimerId = null; }
+          if (vrSessionPollId) { clearInterval(vrSessionPollId); vrSessionPollId = null; }
+        };
+        try {
+          session.addEventListener('end', cleanup, { once: true });
+        } catch (e) {
+          const onceCleanup = function(){ session.removeEventListener('end', onceCleanup); cleanup(); };
+          session.addEventListener('end', onceCleanup);
+        }
+      }
+
+      function schedulePauseResumeAfterVRSessionStart() {
         if (!unityInstance || !unityInstance.Module || !unityInstance.Module.WebXR) return;
         const webxr = unityInstance.Module.WebXR;
+        const handleActive = function() {
+          if (vrPauseTimerId) clearTimeout(vrPauseTimerId);
+          vrPauseTimerId = setTimeout(function(){
+            pauseUnity();
+            if (vrResumeTimerId) clearTimeout(vrResumeTimerId);
+            vrResumeTimerId = setTimeout(function(){
+              resumeUnity();
+            }, RESUME_DELAY_MS);
+          }, PAUSE_DELAY_MS);
+        }
         if (webxr.xrSession && webxr.xrSession.isInSession) {
-          vrReenterOnce = true;
-          attachReenterOnEnd(webxr.xrSession, webxr);
-          if (vrExitTimerId) clearTimeout(vrExitTimerId);
-          vrExitTimerId = setTimeout(function () {
-            webxr.toggleVR();
-          }, 2000);
+          attachCleanupOnEnd(webxr.xrSession);
+          handleActive();
         } else {
           if (vrSessionPollId) clearInterval(vrSessionPollId);
           vrSessionPollId = setInterval(function () {
             if (webxr.xrSession && webxr.xrSession.isInSession) {
               clearInterval(vrSessionPollId);
               vrSessionPollId = null;
-              vrReenterOnce = true;
-              attachReenterOnEnd(webxr.xrSession, webxr);
-              if (vrExitTimerId) clearTimeout(vrExitTimerId);
-              vrExitTimerId = setTimeout(function () {
-                webxr.toggleVR();
-              }, 2000);
+              attachCleanupOnEnd(webxr.xrSession);
+              handleActive();
             }
           }, 100);
         }
@@ -139,7 +162,7 @@
 
       enterVRButton.addEventListener('click', function (event) {
         unityInstance.Module.WebXR.toggleVR();
-        scheduleExitAfterVRSessionStart();
+        schedulePauseResumeAfterVRSessionStart();
       }, false);
     </script>
   </body>
