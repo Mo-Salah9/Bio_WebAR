@@ -446,16 +446,10 @@ void main()
           thisXRMananger.ctx.clear(thisXRMananger.ctx.COLOR_BUFFER_BIT | thisXRMananger.ctx.DEPTH_BUFFER_BIT);
         }
         window.requestAnimationFrame( tempRender );
-        var sessionOptions = {
+        navigator.xr.requestSession('immersive-vr', {
           requiredFeatures: thisXRMananger.gameModule.WebXR.Settings.VRRequiredReferenceSpace,
           optionalFeatures: thisXRMananger.gameModule.WebXR.Settings.VROptionalFeatures
-        };
-        try {
-          if (sessionOptions.optionalFeatures && sessionOptions.optionalFeatures.indexOf('dom-overlay') !== -1) {
-            sessionOptions.domOverlay = { root: document.body };
-          }
-        } catch (e) {}
-        navigator.xr.requestSession('immersive-vr', sessionOptions).then(function (session) {
+        }).then(function (session) {
           session.isImmersive = true;
           session.isInSession = true;
           session.isAR = false;
