@@ -43,6 +43,20 @@
       var container = document.querySelector("#unity-container");
       var canvas = document.querySelector("#unity-canvas");
       var canvasContainer = document.querySelector("#unity-canvas-container");
+      var overlayRoot = document.createElement('div');
+      overlayRoot.id = 'dom-overlay-root';
+      overlayRoot.style.position = 'absolute';
+      overlayRoot.style.top = '0';
+      overlayRoot.style.left = '0';
+      overlayRoot.style.right = '0';
+      overlayRoot.style.bottom = '0';
+      overlayRoot.style.pointerEvents = 'none';
+      overlayRoot.style.display = 'flex';
+      overlayRoot.style.alignItems = 'center';
+      overlayRoot.style.justifyContent = 'center';
+      overlayRoot.innerHTML = '<button id="refresh-controllers" style="pointer-events:auto;padding:12px 16px;font-size:16px;border-radius:8px;border:none;background:#1e90ff;color:#fff;display:none;">Refresh controllers</button>';
+      document.body.appendChild(overlayRoot);
+      var refreshControllersBtn = document.getElementById('refresh-controllers');
       var loadingBar = document.querySelector("#unity-loading-bar");
       var progressBarFull = document.querySelector("#unity-progress-bar-full");
       var fullscreenButton = document.querySelector("#unity-fullscreen-button");
@@ -68,7 +82,7 @@
             };
           }
           // Prefer controllers over hand-tracking on Quest to avoid controllers staying off
-          try { sanitizeVROptionsForControllers(); } catch(e) {}
+          try { sanitizeVROptionsForControllers(); ensureDomOverlayOptionalFeature(); } catch(e) {}
         }).catch((message) => {
           alert(message);
         });
@@ -118,6 +132,16 @@
           });
           // Keep useful defaults
           if (settings.VROptionalFeatures.indexOf('local-floor') === -1) settings.VROptionalFeatures.push('local-floor');
+          if (settings.VROptionalFeatures.indexOf('dom-overlay') === -1) settings.VROptionalFeatures.push('dom-overlay');
+        } catch(e) {}
+      }
+
+      function ensureDomOverlayOptionalFeature() {
+        if (!unityInstance || !unityInstance.Module || !unityInstance.Module.WebXR || !unityInstance.Module.WebXR.Settings) return;
+        const settings = unityInstance.Module.WebXR.Settings;
+        try {
+          if (!Array.isArray(settings.VROptionalFeatures)) settings.VROptionalFeatures = [];
+          if (settings.VROptionalFeatures.indexOf('dom-overlay') === -1) settings.VROptionalFeatures.push('dom-overlay');
         } catch(e) {}
       }
 
@@ -203,6 +227,17 @@
         vrInitAttempts = 0;
         ensureControllersInitialized();
       }, false);
+
+      refreshControllersBtn.addEventListener('click', function(){
+        if (!unityInstance || !unityInstance.Module || !unityInstance.Module.WebXR) return;
+        const webxr = unityInstance.Module.WebXR;
+        if (webxr.xrSession && webxr.xrSession.isInSession) {
+          webxr.xrSession.end();
+          setTimeout(function(){ webxr.toggleVR(); }, 700);
+        } else {
+          webxr.toggleVR();
+        }
+      });
     </script>
   </body>
 </html>
